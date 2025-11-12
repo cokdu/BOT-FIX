@@ -1,0 +1,202 @@
+// server.js - Main Telegram Bot dengan integrasi ChatGPT & Google Sheets
+require('dotenv').config();
+const TelegramBot = require('node-telegram-bot-api');
+const axios = require('axios');
+
+// Environment Variables
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL;
+
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+
+console.log('Bot Telegram berjalan...');
+
+// Function: Kirim data ke Google Sheets
+async function sendToGoogleSheets(action, data) {
+  try {
+    const response = await axios.post(GOOGLE_SCRIPT_URL, {
+      action: action,
+      ...data
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error sending to Google Sheets:', error.message);
+    return { success: false, message: 'Gagal menghubungi Google Sheets' };
+  }
+}
+
+// Function: Analisis pesan menggunakan ChatGPT
+async function analyzeMessageWithChatGPT(message, userId, username) {
+  try {
+    const systemPrompt = `Kamu adalah asisten yang menganalisis pesan order dari customer.
+Tugasmu adalah mengidentifikasi jenis pesan:
+- "new_order" = pesan berisi pesanan baru
+- "update" = pesan berisi permintaan update/perubahan order
+- "cancel" = pesan berisi pembatalan order
+- "inquiry" = pesan berisi pertanyaan atau informasi umum
+
+Analisis pesan dan berikan response dalam format JSON:
+{
+  "orderType": "new_order|update|cancel|inquiry",
+  "confidence": 0.0-1.0,
+  "extractedInfo": "informasi penting dari pesan",
+  "suggestedReply": "balasan yang sesuai untuk user"
+}`;
+
+    const response = await axios.post(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `User: ${username} (ID: ${userId})\nPesan: ${message}` }
+        ],
+        temperature: 0.3,
+        max_tokens: 500
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const content = response.data.choices[0].message.content;
+    
+    // Parse JSON dari response ChatGPT
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    
+    return {
+      orderType: 'inquiry',
+      confidence: 0.5,
+      extractedInfo: message,
+      suggestedReply: 'Terima kasih atas pesan Anda. Tim kami akan segera menghubungi Anda.'
+    };
+
+  } catch (error) {
+    console.error('Error analyzing with ChatGPT:', error.message);
+    return {
+      orderType: 'inquiry',
+      confidence: 0,
+      extractedInfo: message,
+      suggestedReply: 'Pesan Anda telah kami terima.'
+    };
+  }
+}
+
+// Handler: Setiap pesan yang masuk
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const username = msg.from.username || msg.from.first_name || 'Unknown';
+  const message = msg.text;
+
+  console.log(`Pesan dari ${username} (${userId}): ${message}`);
+
+  // Kirim notifikasi bahwa pesan sedang diproses
+  await bot.sendMessage(chatId, '⏳ Memproses pesan Anda...');
+
+  // 1. Analisis pesan dengan ChatGPT
+  const analysis = await analyzeMessageWithChatGPT(message, userId, username);
+  
+  console.log('Analisis ChatGPT:', analysis);
+
+  // 2. Tentukan aksi berdasarkan analisis
+  let action = 'add';
+  let sheetData = {
+    userId: userId,
+    username: username,
+    message: message,
+    orderType: analysis.orderType,
+    status: 'pending',
+    notes: analysis.extractedInfo
+  };
+
+  if (analysis.orderType === 'update') {
+    action = 'update';
+    sheetData.status = 'updated';
+  } else if (analysis.orderType === 'cancel') {
+    action = 'cancel';
+  }
+
+  // 3. Kirim ke Google Sheets
+  const sheetResponse = await sendToGoogleSheets(action, sheetData);
+
+  // 4. Kirim response ke user
+  let replyMessage = '';
+  
+  if (sheetResponse.success) {
+    if (action === 'cancel') {
+      replyMessage = `✅ Order Anda berhasil dibatalkan.\n\n${analysis.suggestedReply}`;
+    } else if (action === 'update') {
+      replyMessage = `✅ Order Anda berhasil diupdate.\n\n${analysis.suggestedReply}`;
+    } else {
+      replyMessage = `✅ Order Anda telah tercatat (#${sheetResponse.rowNumber}).\n\n${analysis.suggestedReply}`;
+    }
+  } else {
+    replyMessage = `❌ Maaf, terjadi kesalahan sistem.\nPesan: ${sheetResponse.message}`;
+  }
+
+  await bot.sendMessage(chatId, replyMessage);
+});
+
+// Command: /start
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, 
+    `🤖 Selamat datang di Bot Order!\n\n` +
+    `Silakan kirim pesan untuk:\n` +
+    `• Membuat order baru\n` +
+    `• Update order\n` +
+    `• Membatalkan order\n` +
+    `• Bertanya informasi\n\n` +
+    `Semua pesan akan diproses otomatis dan tersimpan di sistem.`
+  );
+});
+
+// Command: /status - cek order user
+bot.onText(/\/status/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  await bot.sendMessage(chatId, '🔍 Mencari order Anda...');
+
+  const response = await sendToGoogleSheets('search', { userId: userId });
+
+  if (response.success && response.count > 0) {
+    let statusMessage = `📋 Order Anda (${response.count} order):\n\n`;
+    
+    response.orders.slice(-5).forEach((order, index) => {
+      statusMessage += `${index + 1}. ${order.orderType} - ${order.status}\n`;
+      statusMessage += `   📝 ${order.message.substring(0, 50)}...\n`;
+      statusMessage += `   🕒 ${new Date(order.timestamp).toLocaleString('id-ID')}\n\n`;
+    });
+
+    await bot.sendMessage(chatId, statusMessage);
+  } else {
+    await bot.sendMessage(chatId, '❌ Belum ada order yang tercatat.');
+  }
+});
+
+// Error handling
+bot.on('polling_error', (error) => {
+  console.error('Polling error:', error);
+});
+
+// Keep alive endpoint untuk Railway
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('Telegram Bot is running!');
+});
+
+app.listen(PORT, () => {
+  console.log(`Server berjalan di port ${PORT}`);
+});

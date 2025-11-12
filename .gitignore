@@ -1,0 +1,5 @@
+# Abaikan folder dependensi
+node_modules/
+
+# ABAIKAN FILE RAHASIA!
+.env
