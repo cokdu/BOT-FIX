@@ -136,26 +136,20 @@ Analisis pesan dan berikan response dalam format JSON:
   }
 }
 
-// Handler: Ketika user REPLY pesan bot (FITUR BARU!)
+// Handler: Ketika user REPLY pesan (UPDATED - bisa reply pesan sendiri)
 async function handleReply(msg) {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const username = msg.from.username || msg.from.first_name || 'Unknown';
   const replyText = msg.text;
-  const originalBotMessage = msg.reply_to_message.text;
+  const repliedMessage = msg.reply_to_message;
+  
+  // Ambil Message ID dari pesan yang di-reply
+  const repliedMessageId = repliedMessage.message_id;
 
   console.log(`🔄 Reply dari ${username}: ${replyText}`);
+  console.log(`🔍 Reply to message ID: ${repliedMessageId}`);
 
-  // Extract Message ID dari pesan bot yang di-reply
-  const messageIdMatch = originalBotMessage.match(/#MSG(\d+)/);
-  
-  if (!messageIdMatch) {
-    await bot.sendMessage(chatId, '❌ Tidak dapat menemukan Message ID. Pastikan Anda reply pesan bot yang benar.');
-    return;
-  }
-
-  const messageId = messageIdMatch[1];
-  
   await bot.sendMessage(chatId, '⏳ Memproses reply Anda...');
 
   // Analisis reply dengan ChatGPT untuk tahu intention
@@ -165,7 +159,7 @@ async function handleReply(msg) {
 
   let action = 'update';
   let sheetData = {
-    messageId: messageId,
+    messageId: repliedMessageId, // Message ID dari pesan yang di-reply
     userId: userId,
     updateMessage: replyText,
     status: 'updated',
@@ -175,7 +169,7 @@ async function handleReply(msg) {
   // Jika deteksi cancel
   if (analysis.orderType === 'cancel' || replyText.toLowerCase().includes('cancel') || replyText.toLowerCase().includes('batal')) {
     action = 'cancel';
-    sheetData = { messageId: messageId };
+    sheetData = { messageId: repliedMessageId };
   }
 
   // Kirim ke Google Sheets
@@ -186,9 +180,9 @@ async function handleReply(msg) {
   
   if (sheetResponse.success) {
     if (action === 'cancel') {
-      replyMessage = `✅ Order #MSG${messageId} berhasil dibatalkan\n\n📝 Order asli:\n"${sheetResponse.originalMessage}"`;
+      replyMessage = `✅ Order #MSG${repliedMessageId} berhasil dibatalkan\n\n📝 Order asli:\n"${sheetResponse.originalMessage}"`;
     } else {
-      replyMessage = `✅ Order #MSG${messageId} berhasil diupdate!\n\n📝 Order asli:\n"${sheetResponse.originalMessage}"\n\n🔄 Update:\n"${replyText}"\n\n${analysis.suggestedReply}`;
+      replyMessage = `✅ Order #MSG${repliedMessageId} berhasil diupdate!\n\n📝 Order asli:\n"${sheetResponse.originalMessage}"\n\n🔄 Update:\n"${replyText}"\n\n${analysis.suggestedReply}`;
     }
   } else {
     replyMessage = `❌ Gagal update order.\nPesan: ${sheetResponse.message}`;
