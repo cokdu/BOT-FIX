@@ -94,7 +94,7 @@ Analisis pesan dan berikan response dalam format JSON:
     const response = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: `User: ${username} (ID: ${userId})\nPesan: ${message}` }
@@ -328,7 +328,7 @@ bot.onText(/\/broadcast/, async (msg) => {
 });
 
 // Scheduler: Kirim broadcast otomatis setiap jam tertentu
-cron.schedule('12,18 * * *', () => {
+cron.schedule('0 8,12,18 * * *', () => {
   console.log('⏰ Waktu broadcast terjadwal!');
   sendBroadcast();
 }, {
