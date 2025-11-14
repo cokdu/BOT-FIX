@@ -254,7 +254,14 @@ bot.on('message', async (msg) => {
   let replyMessage = '';
   
   if (sheetResponse.success) {
-    replyMessage = `✅ Pesan Anda telah tercatat!\n\n📌 Message ID: #MSG${telegramMessageId}\n🔢 Row: ${sheetResponse.rowNumber}\n\n${analysis.suggestedReply}\n\n💡 Tips: Reply pesan Anda sendiri untuk update/cancel order`;
+    // Cek apakah ada AI response
+    if (sheetResponse.aiResponse) {
+      // Kirim AI response langsung
+      replyMessage = `🤖 ${sheetResponse.aiResponse}\n\n📌 Message ID: #MSG${telegramMessageId}`;
+    } else {
+      // Fallback ke response biasa
+      replyMessage = `✅ Pesan Anda telah tercatat!\n\n📌 Message ID: #MSG${telegramMessageId}\n🔢 Row: ${sheetResponse.rowNumber}\n\n${analysis.suggestedReply}\n\n💡 Tips:\n• Reply pesan Anda sendiri untuk update/cancel\n• ATAU reply pesan bot ini juga bisa`;
+    }
   } else {
     replyMessage = `❌ Maaf, terjadi kesalahan sistem.\nPesan: ${sheetResponse.message}`;
   }
